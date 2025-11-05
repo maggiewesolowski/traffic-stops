@@ -1,0 +1,534 @@
+---
+title: "Midterm"
+author: "Sarah, Maggie, Jayden, & Maggie"
+date: "November 13, 2024"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Part One:**
+
+**Introduction:** The data includes information about traffic stops from October 2013 to March 2015 in the state of Connecticut. There are 268,669 traffic stops and each stop is detailed with the driver's age, gender, race, location, reason for stop, along with quite a few more variables. A key objective of this project is to predict the outcome of a traffic stop based on various features in the dataset. To achieve this, we will conduct thorough data exploration and run logistical regression.
+
+```{r, include=FALSE}
+data=read.csv("CT_stops.csv")
+stopID=factor(data$id)
+stopdate=factor(data$stop_date)
+stoptime=data$stop_time
+location=factor(data$location_raw)
+county=factor(data$county_name)
+countyID=factor(data$county_fips)
+gender=factor(data$driver_gender)
+Age=data$driver_age
+race=factor(data$driver_race)
+violation=factor(data$violation)
+search=factor(data$search_conducted)
+searchtype=factor(data$search_type)
+contraband=factor(data$contraband_found)
+outcome=factor(data$stop_outcome)
+arrested=factor(data$is_arrested)
+officerID=factor(data$officer_id)
+duration=factor(data$stop_duration)
+```
+
+```{r,include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(ggpubr)
+library(gridExtra)
+
+interstate <- data$fine_grained_location %>%
+  str_extract(pattern = regex("i-[0-9]+|i[0-9]+|interstate|i [0-9]+", ignore_case = TRUE))
+
+route <- data$fine_grained_location %>%
+  str_extract(pattern = regex("rt|rte|route", ignore_case = TRUE))
+
+exit <- data$fine_grained_location %>%
+  str_extract(pattern = regex("exit", ignore_case = TRUE))
+
+turnpike <- data$fine_grained_location %>%
+  str_extract(pattern = regex("tnpk", ignore_case = TRUE))
+
+hwy <- data$fine_grained_location %>%
+  str_extract(pattern = regex("hwy|highway", ignore_case = TRUE))
+
+streets <- data$fine_grained_location %>%
+  str_extract(pattern = regex("rd|st|ave|blvd|dr|road|street|avenue|boulevard|drive", ignore_case = TRUE))
+
+data <- data %>%
+  mutate(
+    interstate = interstate,
+    route = route,
+    exit = exit,
+    turnpike = turnpike,
+    hwy = hwy,
+    streets = streets
+  )
+
+data <- data %>%
+  mutate(location = case_when(
+    !is.na(interstate) ~ "Interstate",
+    !is.na(route) ~ "Route",
+    !is.na(exit) ~ "Exit",
+    !is.na(turnpike) ~ "Turnpike",
+    !is.na(hwy) ~ "Highway",
+    !is.na(streets) ~ "Street",
+    TRUE ~ "Other"
+  ))
+
+location= factor(data$location)
+
+data$age <- cut(data$driver_age,
+                  breaks = c(15, 24, 40, 60, 99),
+                  labels = c("15-24", "25-40", "41-60", "61+"))
+age=factor(data$age)
+
+
+data <- data %>%
+  mutate(gender = ifelse(gender == "M", "Male", 
+                         ifelse(gender == "F", "Female", gender)))
+
+data <- data %>%
+  mutate(search = ifelse(search == TRUE, "Yes", "No"))
+
+data <- data %>%
+  mutate(search = ifelse(search == TRUE, "Yes", "No"))
+
+data$contraband_found <- ifelse(data$contraband_found == TRUE, 1, 0)
+
+contraband=factor(data$contraband_found)
+
+```
+
+```{r,include=FALSE}
+data_clean <- data[!(is.na(data$stop_time) | data$stop_time == ""), ]
+
+#sum(is.na(data_clean$stop_time))  # Should be 0
+#sum(data_clean$stop_time == "")   # Should be 0
+
+data$stop_time <- strptime(data$stop_time, format = "%H:%M:%S")
+data$hour <- as.numeric(format(data$stop_time, "%H"))
+
+data$hour_category <- cut(data$hour,
+                          breaks = c(0, 6, 12, 18, 24), 
+                          labels = c("12am-6am", "6am-12pm", "12pm-6pm", "6pm-12am"),
+                          right = FALSE)  
+hour_category= data$hour_category
+```
+
+**Exploring Data:** Each of the nearly 270,000 traffic stops included additional information and demographics, including driver's age, race, and gender, where the stop occurred, the outcome of the stop, and whether or not a search was conducted. We focused most of our efforts on exploring four predictor variables: age, race, gender, and stop location. We created a bar graph for each variable against stop outcome or whether or not a search was performed. For the age variable, we cut the driver age into 4 different buckets and defined age ranges
+
+-   Young: Drivers aged 15-24.
+
+-   Middle: Drivers aged 25-40.
+
+-   Older: Drivers aged 41-60.
+
+-   Senior: Drivers 61 and older.
+
+The chosen age buckets were based on life stages and their potential influence on driving behavior and interaction with law enforcement. For instance, drivers in the 15-24 age range are often younger, less experienced, and may have a higher propensity for risky driving behaviors. The 25-40 range represents a broader, more stable age group that encompasses many working adults. The 41-60 range often includes drivers with significant driving experience, potentially leading to fewer traffic infractions. The 61-and-older group, while experienced, may face different challenges or perceptions, such as age-related driving limitations or biases There are some potential downsides to age categorization. While it provides simplicity, some of the granularity can get lost by obscuring age-specific trends within the groups. For example, someone who is 41 might act completely different than a 60 year old, but they are both classified under "Older". Upon performing a Chi Square test on the new age_group category and stop_outcome, we saw a p-value of \< 2.2e-16, indicating a statistically significant association between the variables.
+
+```{r, echo=FALSE}
+ggplot(data, aes(x = location, fill = outcome)) +
+  geom_bar(position = "dodge") +
+  labs(x = "Location Type", y = "Count") + 
+  scale_fill_discrete("Outcome") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+mosaicplot( t(table(location)), col = c("red", "orange", "yellow", "green", "blue", "purple", "maroon"), cex.axis = .60, las = 1, sub = "Location Type", ylab = "Frequency", main = " ")
+```
+
+*Figure 1 and 2:* Comparison of stop outcome among the seven location types. Each location type more or less follows the same distribution of stop outcomes, with tickets being the most common for each. We chose this predictor because different types of streets may be patrolled more than others and for different reasons. For instant streets like highways and the interstate have a faster speed limits and a larger volume of cars driving on them at a time than neighborhood streets. Therefore, there may be a greater motive to patrol highways because they are busier than neighborhood streets. Police may focus more on speeding violations due to the faster speed limit or reckless driving that could lead to a potential fatal accident. In neighborhoods, they may focus more on safety-related stops in order to protect the residents of that area.
+
+
+```{r, echo=FALSE}
+ggplot(data, aes(x = age, fill = outcome)) +
+  geom_bar(position = "dodge") +
+  labs(x = "Age Group", y = "Count") + 
+  scale_fill_discrete("Outcome") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+```
+
+*Figure 3:* Comparison of stop outcome counts among different age groups. Each age group more or less follows the same distribution of stop outcomes, with tickets being the most common for each. There were virtually no cases of arrests or summons in the 61+ age group and way fewer cases of summons between the 25-40  and the 41-60 age groups. Verbal warnings was the second most stop outcome and written warnings were the third in all age groups. 
+
+```{r, echo=FALSE}
+ggplot(data, aes(x = gender, fill = outcome)) +
+  geom_bar(position = "dodge") +
+  labs(x = "Gender", y = "Count") + 
+  scale_fill_discrete("Outcome") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+*Figure 4:* Comparison of stop outcome count among gender. A significant more number of males were pulled over than females, but both genders follow the same distribution of stop outcomes. Receiving a ticket was the most common for each, verbal warning being the second most common outcome, and written warnings being third. Being arrested was the least common outcome for both genders.  
+
+```{r, echo=FALSE}
+data_prop <- data %>%
+  group_by(gender, outcome=factor(data$stop_outcome)) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(gender) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()  
+
+data_prop$outcome <- factor(data_prop$outcome)
+
+ggplot(data_prop, aes(x = factor(gender), y = proportion, fill = outcome)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Gender", y = "Proportion") + 
+  scale_fill_discrete("Outcome") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+*Figure 5:* Comparison of stop outcome proportions among gender. Both males and females follow the same proportion distribution of stop outcomes, with tickets being the most common for each, verbal warning being the second most common outcome, and written warnings being third. The proportion of females who received a ticket looks almost identical to the proportion of males who also received a ticket. The proportion of arrests was the least common outcome for both genders. 
+
+```{r, echo=FALSE}
+data_prop <- data %>%
+  group_by(race, outcome=factor(data$stop_outcome)) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(race) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()  
+
+data_prop$outcome <- factor(data_prop$outcome)
+
+ggplot(data_prop, aes(x = outcome, y = proportion, fill = race)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Outcome", y = "Proportion") + 
+  scale_fill_discrete("Race") + 
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+*Figure 6:* Comparison of stop outcome proportions among the different races. Each race follows similar distributions. Arrest and Summons have similar distributions and verbal warning and written warning follow similar distributions. Ticket is different as Asian individuals have the highest proportions of receiving a ticket among all races. For the two different warnings, White individuals have the highest proportion of receiving some type of warning. For Arrest and Summons, Hispanic individuals proportionally received the most of this type of outcome.
+
+```{r,echo=FALSE}
+data_prop1 <- data %>%
+  group_by(race, hour=factor(data$hour_category)) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(race) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()  
+
+data_prop1$hour <- factor(data_prop1$hour)
+
+
+ggplot(data_prop1, aes(x = hour, y = proportion, fill = race)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Hour", y = "Proportion") + 
+  scale_fill_discrete("Race") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+*Figure 7:* Comparison of the proportion of stops at different times of day across races. During 12pm-6pm, White individuals were pulled over proportionally more. During 6pm-12am, proportionally each race is pulled over about the same with the Other category being pulled over less often. During 6am-12pm the Other category is pulled over the most proportionally. During 12am-6am, White individuals are pulled over the least proportionally.
+
+```{r, echo=FALSE}
+data_prop1 <- data %>%
+  group_by(age, hour=factor(data$hour_category)) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(age) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()  # Remove any residual grouping
+
+data_prop1$hour <- factor(data_prop1$hour)
+
+# Plot with proportions
+ggplot(data_prop1, aes(x = hour, y = proportion, fill = age)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Hour", y = "Proportion") + 
+  scale_fill_discrete("Age") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+*Figure 8:* Comparison of the proportion of stops at different times of day across age groups. During 12pm-6pm, people 61+ were pulled over proportionally more. During 6pm-12am, as age increases, less people from that age group are pulled over proportionally. During 6am-12pm people who are 61+ are pulled over the most proportionally. During 12am-6am and 6pm-12am, the age group 15-24 are pulled over the most proportionally. Overall, we see that during the day from 6am-6pm as age increases, more people from older age groups are stopped. From 6pm-6am as age decreases, more people from younger age groups are stopped. 
+
+**Part Two:**
+
+**The Logistic Model** For the model, we chose to do a generalized linear model. A GLM, such as logistic regression, is chosen for this type of analysis because it is appropriate for binary outcomes, interpretable, allows for statistical inference, and effectively handles various covariates. Given the nature of this analysis, we are predicting whether contraband was found (yes/no). These characteristics make it ideal for examining predictive relationships and drawing meaningful conclusions from traffic stop data, especially when investigating potential biases in search outcomes.We first started by filtering our data to include traffic stops where a search was conducted and filtering out rows with NAs. After splitting our data, we built a model with variables race, hour category(12am-6am, 6am-12pm, 12pm-6pm, 6pm-12am), gender, age, and location. We found that the hour category and age were significant. Overall the accuracy of the model is around 56%. Our sensitivity came out to be 0.405 and our specificity is 0.732.
+
+```{r, echo= FALSE, results= 'hide'}
+set.seed(234)
+
+data_filtered <- data %>%
+  filter(search_conducted == TRUE) %>%  
+  filter(!is.na(contraband_found), !is.na(driver_race), !is.na(hour_category), !is.na(location), !is.na(gender), !is.na(age))
+
+train.ct = sample(1:nrow(data_filtered), floor(.75 * nrow(data_filtered)), replace = FALSE)
+ct.tr <- data_filtered[train.ct, ]
+ct.te <- data_filtered[-train.ct, ]
+head(ct.tr)
+
+model <- glm(contraband_found ~ driver_race + hour_category + gender + age + location, 
+             family = "binomial", 
+             data = ct.tr)
+summary(model)
+
+threshold = mean(ct.tr$contraband_found)
+
+pred_probs <- predict(model, newdata=ct.tr, type = "response")
+pred.tr.resp = pred_probs > threshold
+pred.tr.table = table(pred.tr.resp, ct.tr$contraband_found)
+
+print(pred.tr.table)
+
+#Sensitivity: 696/ 1715 = 0.405
+#Specificity: 1200/ 1638 = 0.732
+#Accuracy: 1896/ 3353 = 0.565
+```
+
+**Model Selection:**  For our model selection procedures we chose forward and backward selection. We chose forward and backward selection because they are simple and easy to understand, and efficient when picking only the most important predictors for our model. These methods helped us remove variables based on how much they contribute to the model, allowing us to exclude unnecessary factors. Compared to more complex techniques, like LASSO which can be harder to interpret, forward and backward selection gave us clear results which we used when choosing our variables. Both of these resulted in only age being significant for our model. With this new model, our accuracy increased by 0.04 (new accuracy = 0.603). Our sensitivity is 0.456 and our specificity is 0.681; sensitivity increased while specificity decreased. 
+
+```{r, echo=FALSE,results= 'hide'}
+#Forward
+full= glm(contraband_found ~ driver_race + hour_category + gender + age + location, 
+             family = binomial(), 
+             data = data_filtered)
+null <- glm(contraband_found ~ 1, family=binomial, data=data_filtered)
+selected <- step(null, scope=list(lower=null, upper=full), direction="forward", trace=0)
+summary(selected)
+
+#Backward
+back.elim <- step(full,  direction="backward", trace=0)
+summary(back.elim)
+
+
+new=glm(formula = contraband_found ~ age + driver_race, family = binomial, 
+    data = data_filtered)
+summary(new)
+
+threshold2 = mean(ct.te$contraband_found)
+
+pred_probs2 <- predict(new, newdata=ct.te, type = "response")
+pred.te.resp = pred_probs2 > threshold2
+pred.te.table = table(pred.te.resp, ct.te$contraband_found)
+
+print(pred.te.table)
+
+#Sensitivity: 178/390 = 0.456
+#Specificity: 496/ 728 = 0.681
+#Accuracy: 674/1118 = 0.603
+```
+
+**Optimizing the Threshold for Accuracy:** As the threshold varies from 0 to 1 we found that the optimal threshold for overall accuracy was 0.46, giving an overall accuracy of 65%. However, when we considered sensitivity and specificity, we found that a lower threshold would be more accurate. Given the intersection of the graph below, we went with a threshold of .36 instead of the recommended .46. Having a lower threshold will account for a class imbalance that we may have missed due to the high threshold.
+
+```{r,echo= FALSE, results='hide'}
+new=glm(contraband_found ~ age + driver_race, family = binomial, 
+    data = data_filtered)
+summary(new)
+
+threshold2 = mean(ct.te$contraband_found)
+pred_probs2 <- predict(new, newdata=ct.te, type = "response")
+pred.te.resp = pred_probs2 > threshold2
+pred.te.table = table(pred.te.resp, ct.te$contraband_found)
+
+
+thresholds <- seq(0, 1, by = 0.01)
+
+accuracy_values <- numeric(length(thresholds))
+for (i in 1:length(thresholds)) {
+  predicted_outcomes <- ifelse(pred_probs2 > thresholds[i], 1, 0)
+  accuracy_values[i] <- mean(predicted_outcomes == ct.te$contraband_found)
+}
+sensitivity_values <- numeric(length(thresholds))
+
+for (i in 1:length(thresholds)) {
+  predicted_outcomes <- ifelse(pred_probs2 > thresholds[i], 1, 0)
+  TP <- sum(predicted_outcomes == 1 & ct.te$contraband_found == 1)
+  FN <- sum(predicted_outcomes == 0 & ct.te$contraband_found == 1)
+
+  sensitivity_values[i] <- ifelse((TP + FN) > 0, TP / (TP + FN), NA)
+}
+
+specificity_values <- numeric(length(thresholds))
+
+for (i in 1:length(thresholds)) {
+  predicted_outcomes <- ifelse(pred_probs2 > thresholds[i], 1, 0)
+  TN <- sum(predicted_outcomes == 0 & ct.te$contraband_found == 0)
+  FP <- sum(predicted_outcomes == 1 & ct.te$contraband_found == 0)
+  specificity_values[i] <- ifelse((TN + FP) > 0, TN / (TN + FP), NA)
+}
+```
+
+
+```{r, echo=FALSE}
+plot(thresholds, accuracy_values, type = "l", col = "blue", 
+     ylim = c(0,1), xlab = "Classification Threshold", ylab = "Accuracy", 
+     main = "Accuracy vs Classification Threshold")
+lines(thresholds, sensitivity_values, type = "l", col="red")
+lines(thresholds, specificity_values, type = "l", col="green")
+grid()
+```
+
+
+```{r, echo=FALSE,results='hide'}
+best_threshold <- thresholds[which.max(accuracy_values)]
+max_accuracy <- max(accuracy_values) 
+
+cat("Best Threshold:", best_threshold, "\n") #Best Threshold: 0.46 
+cat("Maximum Accuracy:", max_accuracy, "\n") #Maximum Accuracy: 0.6511628 
+
+```
+
+**Results Summary:** Our model doesn't appear to show discrimination as race is not significant in predicting whether contraband was found. A caveat of our results is that overall the majority of the data was of White individuals and this may have affected the results. Some other types of data that would be helpful to have would be color of car, race of police officer, gender of police officer, number of people in the car, number of times they have received a ticket or been arrested, and the weather (if it is raining or snowing for example).
+
+
+
+```{r, include= FALSE, echo= FALSE, results= 'hide'}
+
+#Accuracy Test: Make traffic search outcome predictions using the dataset `CT_prediction_set.csv`. Upload your predictions to Canvas as a .csv file that contains two columns (in this order): id, outcome_prediction. Do not reorder the rows. Your predictions will be compared against the true outcomes and accuracy will be assessed. This section does not need to be included in your report.
+
+data2=read.csv("CT_prediction_set.csv")
+stopID=factor(data2$id)
+stopdate=factor(data2$stop_date)
+stoptime=data2$stop_time
+location=factor(data2$location_raw)
+county=factor(data2$county_name)
+countyID=factor(data2$county_fips)
+gender=factor(data2$driver_gender)
+Age=data2$driver_age
+race=factor(data2$driver_race)
+violation=factor(data2$violation)
+search=factor(data2$search_conducted)
+searchtype=factor(data2$search_type)
+contraband=factor(data2$contraband_found)
+outcome=factor(data2$stop_outcome)
+arrested=factor(data2$is_arrested)
+officerID=factor(data2$officer_id)
+duration=factor(data2$stop_duration)
+
+interstate <- data2$fine_grained_location %>%
+  str_extract(pattern = regex("i-[0-9]+|i[0-9]+|interstate|i [0-9]+", ignore_case = TRUE))
+
+route <- data2$fine_grained_location %>%
+  str_extract(pattern = regex("rt|rte|route", ignore_case = TRUE))
+
+exit <- data2$fine_grained_location %>%
+  str_extract(pattern = regex("exit", ignore_case = TRUE))
+
+turnpike <- data2$fine_grained_location %>%
+  str_extract(pattern = regex("tnpk", ignore_case = TRUE))
+
+hwy <- data2$fine_grained_location %>%
+  str_extract(pattern = regex("hwy|highway", ignore_case = TRUE))
+
+streets <- data2$fine_grained_location %>%
+  str_extract(pattern = regex("rd|st|ave|blvd|dr|road|street|avenue|boulevard|drive", ignore_case = TRUE))
+
+data2 <- data2 %>%
+  mutate(
+    interstate = interstate,
+    route = route,
+    exit = exit,
+    turnpike = turnpike,
+    hwy = hwy,
+    streets = streets
+  )
+
+data2 <- data2 %>%
+  mutate(location = case_when(
+    !is.na(interstate) ~ "Interstate",
+    !is.na(route) ~ "Route",
+    !is.na(exit) ~ "Exit",
+    !is.na(turnpike) ~ "Turnpike",
+    !is.na(hwy) ~ "Highway",
+    !is.na(streets) ~ "Street",
+    TRUE ~ "Other"
+  ))
+
+location= factor(data2$location)
+
+data2$age <- cut(data2$driver_age,
+                  breaks = c(15, 24, 40, 60, 99),
+                  labels = c("15-24", "25-40", "41-60", "61+"))
+age=factor(data2$age)
+
+
+data2 <- data2 %>%
+  mutate(gender = ifelse(gender == "M", "Male", 
+                         ifelse(gender == "F", "Female", gender)))
+
+
+data2 <- data2 %>%
+  mutate(search = ifelse(search == TRUE, "Yes", "No"))
+
+data2_clean <- data[!(is.na(data2$stop_time) | data2$stop_time == ""), ]
+
+
+data2$stop_time <- strptime(data2$stop_time, format = "%H:%M:%S")
+data2$hour <- as.numeric(format(data2$stop_time, "%H"))
+
+data2$hour_category <- cut(data2$hour,
+                          breaks = c(0, 6, 12, 18, 24), 
+                          labels = c("12am-6am", "6am-12pm", "12pm-6pm", "6pm-12am"),
+                          right = FALSE)  
+hour_category= data2$hour_category
+
+
+set.seed(235)
+
+data_filtered2 <- data2 %>%
+  filter(search_conducted == TRUE) %>%  
+  filter(!is.na(driver_race), !is.na(hour_category), !is.na(location), !is.na(gender), !is.na(age))
+
+new=glm(formula = contraband_found ~ age + driver_race, family = binomial, 
+    data = data_filtered)
+summary(new)
+
+data_filtered2$outcome_prediction <- predict(new, newdata = data_filtered2, type = "response")
+
+data_filtered2$outcome_prediction <- ifelse(data_filtered2$outcome_prediction > .36, 1, 0)
+
+submission <- data_filtered2 %>%
+  select(id, outcome_prediction)
+submission
+
+table(data_filtered2$outcome_prediction)
+
+colnames(submission) <- c("id", "outcome_prediction")
+write.csv(submission, "CT_submission2.csv", row.names = FALSE)
+
+
+```
+
+
+
+
